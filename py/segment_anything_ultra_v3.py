@@ -2,6 +2,7 @@
 
 from .imagefunc import *
 from .segment_anything_func import *
+import inspect
 
 
 class LS_LoadSAMModels:
@@ -45,7 +46,7 @@ class LS_SegmentAnythingUltraV3:
             "required": {
                 "image": ("IMAGE",),
                 "sam_models": ("LS_SAM_MODELS", ),
-                "threshold": ("FLOAT", {"default": 0.3, "min": 0, "max": 1.0, "step": 0.01}),
+                "grounding_dino_threshold": ("FLOAT", {"default": 0.3, "min": 0, "max": 1.0, "step": 0.01}),
                 "detail_method": (method_list,),
                 "detail_erode": ("INT", {"default": 6, "min": 1, "max": 255, "step": 1}),
                 "detail_dilate": ("INT", {"default": 6, "min": 1, "max": 255, "step": 1}),
@@ -55,6 +56,7 @@ class LS_SegmentAnythingUltraV3:
                 "prompt": ("STRING", {"default": "subject"}),
                 "device": (device_list,),
                 "max_megapixels": ("FLOAT", {"default": 2.0, "min": 1, "max": 999, "step": 0.1}),
+                "sam_score_threshold": ("FLOAT", {"default": 0.7, "min": 0.0, "max": 1.0, "step": 0.01}),
             },
             "optional": {
             }
@@ -65,10 +67,10 @@ class LS_SegmentAnythingUltraV3:
     FUNCTION = "segment_anything_ultra_v3"
     CATEGORY = '😺dzNodes/LayerMask'
 
-    def segment_anything_ultra_v3(self, image, sam_models, threshold,
+    def segment_anything_ultra_v3(self, image, sam_models, grounding_dino_threshold,
                                   detail_method, detail_erode, detail_dilate,
                                   black_point, white_point, process_detail, prompt,
-                                  device, max_megapixels,
+                                  device, max_megapixels, sam_score_threshold
                                   ):
 
         if detail_method == 'VITMatte(local)':
@@ -83,16 +85,25 @@ class LS_SegmentAnythingUltraV3:
 
         ret_images = []
         ret_masks = []
-
+        frame_idex = 0
         for i in image:
             i = torch.unsqueeze(i, 0)
             i = pil2tensor(tensor2pil(i).convert('RGB'))
             _image = tensor2pil(i).convert('RGBA')
-            boxes = groundingdino_predict(DINO_MODEL, _image, prompt, threshold)
+            boxes = groundingdino_predict(DINO_MODEL, _image, prompt, grounding_dino_threshold)
+
             if boxes.shape[0] == 0:
                 break
-            (_, _mask) = sam_segment(SAM_MODEL, _image, boxes)
+            (_, _mask) = sam_segment(SAM_MODEL, _image, boxes, sam_score_threshold)
             _mask = _mask[0]
+            # DEBUG: inspect raw V3 mask tensor
+            print(f"[DEBUG V3] raw _mask min={_mask.min().item()}, "
+                f"max={_mask.max().item()}, sum={_mask.sum().item()}")
+
+            # DEBUG: save that raw mask
+            raw_v3 = (_mask.cpu().numpy() * 255).astype('uint8').squeeze()
+            Image.fromarray(raw_v3).save("debug_v3_rawmask0.png")
+
             detail_range = detail_erode + detail_dilate
             if process_detail:
                 if detail_method == 'GuidedFilter':
